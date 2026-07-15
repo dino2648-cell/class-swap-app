@@ -1,0 +1,9 @@
+.git
+.gitignore
+.venv
+__pycache__
+*.py[cod]
+*.db
+data
+main.cpp
+tests/__pycache__

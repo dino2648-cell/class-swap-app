@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 620 560" fill="none">
+  <path
+    d="M72 516C137 516 150 477 150 430V310C150 258 181 226 234 226H336V84L454 146L336 208V226H592"
+    stroke="#77E3D0"
+    stroke-width="62"
+    stroke-linecap="square"
+    stroke-linejoin="miter"
+  />
+  <path
+    d="M72 516C118 522 142 546 154 584"
+    stroke="#77E3D0"
+    stroke-width="62"
+    stroke-linecap="square"
+    stroke-linejoin="miter"
+  />
+</svg>
