@@ -159,6 +159,24 @@ function prettySlot(cell) {
   return "공강";
 }
 
+function slotCardLabel(slot) {
+  return slot.slot_type === "travel" ? `${slot.location_label} 순회` : `${slot.class_code} ${slot.subject}`;
+}
+
+const ADMIN_SUB_TAB_STORAGE_KEY = "classSwapAdminSubTab";
+const ADMIN_SUB_TAB_IDS = [
+  "manual",
+  "timetable",
+  "timetable-manage",
+  "members",
+  "calendar",
+  "debug",
+  "impact",
+  "allowance",
+  "history",
+  "semester-reset",
+];
+
 function isOutgoingStatus(status) {
   return status === "swapped-out" || status === "coverage-out" || status === "coverage-pending-out";
 }
@@ -1102,12 +1120,10 @@ function AdminTimetableManager({ teachers, slots, onCreateSlot, onUpdateSlot, on
                             <div className="slot-admin-main">
                               <span className="slot-period">{slot.period}교시</span>
                               <div>
-                                <strong>
-                                  {slot.slot_type === "travel"
-                                    ? `${slot.location_label} 순회`
-                                    : `${slot.class_code} ${slot.subject}`}
-                                </strong>
-                                <div className="tiny">{slot.source_text}</div>
+                                <strong>{slotCardLabel(slot)}</strong>
+                                {slot.source_text && slot.source_text !== slotCardLabel(slot) ? (
+                                  <div className="tiny">{slot.source_text}</div>
+                                ) : null}
                               </div>
                             </div>
                             <div className="button-row compact">
@@ -1211,7 +1227,26 @@ function AdminPanel({
   const [allowanceReport, setAllowanceReport] = useState(null);
   const [allowanceError, setAllowanceError] = useState("");
   const [allowanceLoading, setAllowanceLoading] = useState(false);
-  const [adminSubTab, setAdminSubTab] = useState("manual");
+  const [semesterResetStatus, setSemesterResetStatus] = useState(null);
+  const [semesterResetConfirmInput, setSemesterResetConfirmInput] = useState("");
+  const [semesterResetBusy, setSemesterResetBusy] = useState(false);
+  const [semesterResetResult, setSemesterResetResult] = useState(null);
+  const [adminSubTab, setAdminSubTab] = useState(() => {
+    try {
+      const saved = window.localStorage.getItem(ADMIN_SUB_TAB_STORAGE_KEY);
+      return ADMIN_SUB_TAB_IDS.includes(saved) ? saved : "manual";
+    } catch (error) {
+      return "manual";
+    }
+  });
+  const selectAdminSubTab = (id) => {
+    setAdminSubTab(id);
+    try {
+      window.localStorage.setItem(ADMIN_SUB_TAB_STORAGE_KEY, id);
+    } catch (error) {
+      // localStorage unavailable (e.g. private browsing) — tab selection just won't persist.
+    }
+  };
   const adminSubTabs = [
     { id: "manual", label: "관리자 매뉴얼" },
     { id: "timetable", label: "시간표 업로드" },
@@ -1222,6 +1257,7 @@ function AdminPanel({
     { id: "impact", label: "영향도 검사" },
     { id: "allowance", label: "월별 보강 수당" },
     { id: "history", label: "교체·보강 이력" },
+    { id: "semester-reset", label: "학기 초기화" },
   ];
   useEffect(() => {
     if (!debugForm.teacherId && teachers.length) {
@@ -1464,6 +1500,53 @@ function AdminPanel({
     link.click();
     URL.revokeObjectURL(url);
   };
+  const loadSemesterResetStatus = async () => {
+    try {
+      const payload = await apiFetch("/api/admin/semester-reset");
+      setSemesterResetStatus(payload);
+    } catch (error) {
+      setSemesterResetStatus(null);
+    }
+  };
+  const runSemesterReset = async () => {
+    if (semesterResetConfirmInput.trim() !== "초기화") return;
+    setSemesterResetBusy(true);
+    setSemesterResetResult(null);
+    try {
+      const payload = await apiFetch("/api/admin/semester-reset", {
+        method: "POST",
+        body: JSON.stringify({ confirm_text: semesterResetConfirmInput.trim() }),
+      });
+      setSemesterResetResult(payload);
+      setSemesterResetConfirmInput("");
+      await loadSemesterResetStatus();
+      await onReloadAdminData();
+    } catch (error) {
+      setBootStatus(extractErrorMessage(error));
+      setStatusTone("error");
+    } finally {
+      setSemesterResetBusy(false);
+    }
+  };
+  const runSemesterResetUndo = async () => {
+    setSemesterResetBusy(true);
+    try {
+      await apiFetch("/api/admin/semester-reset/undo", { method: "POST" });
+      setSemesterResetResult(null);
+      await loadSemesterResetStatus();
+      await onReloadAdminData();
+    } catch (error) {
+      setBootStatus(extractErrorMessage(error));
+      setStatusTone("error");
+    } finally {
+      setSemesterResetBusy(false);
+    }
+  };
+  useEffect(() => {
+    if (adminSubTab === "semester-reset") {
+      loadSemesterResetStatus();
+    }
+  }, [adminSubTab]);
   const renderActiveRow = (item) => (
     <details key={item.id} className={`active-history-row ${item.type}`}>
       <summary>
@@ -1530,7 +1613,7 @@ function AdminPanel({
               type="button"
               role="tab"
               aria-selected={adminSubTab === tab.id}
-              onClick={() => setAdminSubTab(tab.id)}
+              onClick={() => selectAdminSubTab(tab.id)}
             >
               {tab.label}
             </button>
@@ -1538,7 +1621,8 @@ function AdminPanel({
         </div>
       </div>
 
-      <div className={`panel admin-manual ${adminSubTab === "manual" ? "" : "is-hidden"}`}>
+      {adminSubTab === "manual" && (
+      <div className="panel admin-manual">
         <div className="manual-hero">
           <div>
             <span className="hero-pill">Admin Guide</span>
@@ -1661,8 +1745,10 @@ function AdminPanel({
           </span>
         </div>
       </div>
+      )}
 
-      <div className={`admin-grid ${adminSubTab === "timetable" ? "" : "is-hidden"}`}>
+      {adminSubTab === "timetable" && (
+      <div className="admin-grid">
         <div className="panel">
           <div className="panel-header">
             <div>
@@ -1690,8 +1776,10 @@ function AdminPanel({
           </div>
         </div>
       </div>
+      )}
 
-      <div className={`panel ${adminSubTab === "debug" ? "" : "is-hidden"}`}>
+      {adminSubTab === "debug" && (
+      <div className="panel">
         <div className="panel-header">
           <div>
             <h3>시스템 점검</h3>
@@ -1814,8 +1902,10 @@ function AdminPanel({
           </div>
         )}
       </div>
+      )}
 
-      <div className={`panel ${adminSubTab === "impact" ? "" : "is-hidden"}`}>
+      {adminSubTab === "impact" && (
+      <div className="panel">
         <div className="panel-header">
           <div>
             <h3>확정 교체·보강 영향도 검사</h3>
@@ -1877,8 +1967,10 @@ function AdminPanel({
           </div>
         )}
       </div>
+      )}
 
-      <div className={`panel ${adminSubTab === "allowance" ? "" : "is-hidden"}`}>
+      {adminSubTab === "allowance" && (
+      <div className="panel">
         <div className="panel-header">
           <div>
             <h3>월별 보강 수당 산출</h3>
@@ -1999,9 +2091,10 @@ function AdminPanel({
           </div>
         )}
       </div>
+      )}
 
-      {preview ? (
-        <div className={`panel ${adminSubTab === "timetable" ? "" : "is-hidden"}`}>
+      {preview && adminSubTab === "timetable" ? (
+        <div className="panel">
           <div className="panel-header">
             <div>
               <h3>파싱 결과 미리보기</h3>
@@ -2100,7 +2193,7 @@ function AdminPanel({
         </div>
       ) : null}
 
-      <div className={adminSubTab === "timetable-manage" ? "" : "is-hidden"}>
+      {adminSubTab === "timetable-manage" && (
         <AdminTimetableManager
           teachers={teachers}
           slots={adminTimetable?.slots || []}
@@ -2108,14 +2201,12 @@ function AdminPanel({
           onUpdateSlot={onUpdateTimetableSlot}
           onDeleteSlot={onDeleteTimetableSlot}
         />
-      </div>
+      )}
 
-      <div
-        className={`admin-grid admin-single ${
-          adminSubTab === "calendar" || adminSubTab === "members" ? "" : "is-hidden"
-        }`}
-      >
-        <div className={`panel ${adminSubTab === "calendar" ? "" : "is-hidden"}`}>
+      {(adminSubTab === "calendar" || adminSubTab === "members") && (
+      <div className="admin-grid admin-single">
+        {adminSubTab === "calendar" && (
+        <div className="panel">
           <div className="panel-header">
             <div>
               <h3>학사일정</h3>
@@ -2208,8 +2299,10 @@ function AdminPanel({
             ))}
           </div>
         </div>
+        )}
 
-        <div className={`panel ${adminSubTab === "members" ? "" : "is-hidden"}`}>
+        {adminSubTab === "members" && (
+        <div className="panel">
           <div className="panel-header">
             <div>
               <h3>회원·교사 관리</h3>
@@ -2348,9 +2441,12 @@ function AdminPanel({
             </div>
           </div>
         </div>
+        )}
       </div>
+      )}
 
-      <div className={`panel ${adminSubTab === "history" ? "" : "is-hidden"}`}>
+      {adminSubTab === "history" && (
+      <div className="panel">
         <div className="panel-header">
           <div>
             <h3>현재 반영 중인 교체·보강</h3>
@@ -2480,8 +2576,10 @@ function AdminPanel({
           </div>
         )}
       </div>
+      )}
 
-      <div className={`panel ${adminSubTab === "history" ? "" : "is-hidden"}`}>
+      {adminSubTab === "history" && (
+      <div className="panel">
         <div className="panel-header">
           <div>
             <h3>전체 교체·보강 이력</h3>
@@ -2579,6 +2677,65 @@ function AdminPanel({
           </div>
         )}
       </div>
+      )}
+
+      {adminSubTab === "semester-reset" && (
+      <div className="panel">
+        <div className="panel-header">
+          <div>
+            <h3>학기 초기화</h3>
+            <div className="panel-copy">
+              새 학기를 시작하기 전, 교사 계정과 시간표·교체/보강 데이터를 전부 지우고 처음 상태로 되돌립니다. 관리자 계정은 그대로 유지됩니다.
+            </div>
+          </div>
+        </div>
+        <div className="notice">
+          삭제되는 항목: 교사 계정 전체, 시간표, 학사일정(공휴일 등 학기 설정), 교체·보강 요청/이력, 관련 알림. 관리자 계정과 로그인 정보는 유지됩니다.
+        </div>
+        {semesterResetResult ? (
+          <div className="info-strip">초기화 완료: 교사 계정 {semesterResetResult.removed_teachers}명이 삭제되었습니다.</div>
+        ) : null}
+        <div className="field-grid">
+          <div className="field">
+            <span className="field-title">확인을 위해 "초기화"를 정확히 입력하세요</span>
+            <input
+              className="input"
+              type="text"
+              value={semesterResetConfirmInput}
+              onChange={(event) => setSemesterResetConfirmInput(event.target.value)}
+              placeholder="초기화"
+            />
+          </div>
+        </div>
+        <div className="button-row">
+          <button
+            className="button warn"
+            disabled={semesterResetConfirmInput.trim() !== "초기화" || semesterResetBusy}
+            onClick={runSemesterReset}
+          >
+            {semesterResetBusy ? "처리 중..." : "학기 초기화 실행"}
+          </button>
+        </div>
+        <div className="divider"></div>
+        <div className="panel-header">
+          <div>
+            <h3>되돌리기</h3>
+            <div className="panel-copy">
+              {semesterResetStatus?.backup_available
+                ? `방금 초기화 직전 상태로 한 번 되돌릴 수 있습니다. (백업 시각: ${semesterResetStatus.backup_created_at?.slice(0, 19).replace("T", " ")}) 되돌리면 초기화 이후 새로 입력한 내용은 사라집니다.`
+                : "되돌릴 수 있는 초기화 백업이 없습니다."}
+            </div>
+          </div>
+          <button
+            className="button reset"
+            disabled={!semesterResetStatus?.backup_available || semesterResetBusy}
+            onClick={runSemesterResetUndo}
+          >
+            {semesterResetBusy ? "처리 중..." : "초기화 되돌리기"}
+          </button>
+        </div>
+      </div>
+      )}
     </div>
   );
 }
@@ -2601,12 +2758,16 @@ function App() {
   const [sourceChoice, setSourceChoice] = useState(null);
   const [candidateWeekOffset, setCandidateWeekOffset] = useState(0);
   const [candidateResults, setCandidateResults] = useState({ 0: null, 1: null });
+  const [candidateLoading, setCandidateLoading] = useState(false);
+  const [candidateError, setCandidateError] = useState(null);
   const [coverageDate, setCoverageDate] = useState(today);
   const [coverageSources, setCoverageSources] = useState(null);
   const [coverageSourceChoice, setCoverageSourceChoice] = useState(null);
   const [coverageCandidateWeekOffset, setCoverageCandidateWeekOffset] = useState(0);
   const [coverageCandidateTab, setCoverageCandidateTab] = useState("available");
   const [coverageCandidateResults, setCoverageCandidateResults] = useState({ 0: null, 1: null });
+  const [coverageCandidateLoading, setCoverageCandidateLoading] = useState(false);
+  const [coverageCandidateError, setCoverageCandidateError] = useState(null);
   const [swapRequests, setSwapRequests] = useState({ received: [], sent: [] });
   const [coverageRequests, setCoverageRequests] = useState({ received: [], sent: [] });
   const [notifications, setNotifications] = useState({ items: [] });
@@ -2892,6 +3053,8 @@ function App() {
     try {
       setSourceChoice(period);
       setCandidateWeekOffset(weekOffset);
+      setCandidateLoading(true);
+      setCandidateError(null);
       const [thisWeekPayload, nextWeekPayload] = await Promise.all(
         swapCandidateWeekTabs.map((tab) =>
           apiFetch(`/api/swaps/candidates?date=${swapDate}&period=${period}&week_offset=${tab.value}`),
@@ -2901,8 +3064,11 @@ function App() {
       setBootStatus("");
     } catch (error) {
       setCandidateResults({ 0: null, 1: null });
+      setCandidateError(extractErrorMessage(error));
       setBootStatus(extractErrorMessage(error));
       setStatusTone("error");
+    } finally {
+      setCandidateLoading(false);
     }
   };
 
@@ -2948,6 +3114,8 @@ function App() {
       setCoverageSourceChoice(selectedSource);
       setCoverageCandidateWeekOffset(0);
       setCoverageCandidateTab("available");
+      setCoverageCandidateLoading(true);
+      setCoverageCandidateError(null);
       const [thisWeekPayload, nextWeekPayload] = await Promise.all(
         swapCandidateWeekTabs.map((tab) =>
           apiFetch(
@@ -2960,8 +3128,11 @@ function App() {
       setStatusTone("info");
     } catch (error) {
       setCoverageCandidateResults({ 0: null, 1: null });
+      setCoverageCandidateError(extractErrorMessage(error));
       setBootStatus(extractErrorMessage(error));
       setStatusTone("error");
+    } finally {
+      setCoverageCandidateLoading(false);
     }
   };
 
@@ -3389,33 +3560,41 @@ function App() {
               <div className="muted">ID와 비밀번호를 입력해 주세요.</div>
             </div>
             <StatusBanner status={bootStatus} tone={statusTone} onDismiss={() => setBootStatus("")} />
-            <div className="field-grid">
-              <div className="field">
-                <span className="field-title">ID</span>
-                <input
-                  className="input"
-                  type="text"
-                  value={loginForm.username}
-                  onChange={(event) => setLoginForm((prev) => ({ ...prev, username: event.target.value }))}
-                  placeholder="예: 이름 또는 admin"
-                />
+            <form
+              className="login-form"
+              onSubmit={(event) => {
+                event.preventDefault();
+                handleLogin();
+              }}
+            >
+              <div className="field-grid">
+                <label className="field">
+                  <span className="field-title">ID</span>
+                  <input
+                    className="input"
+                    type="text"
+                    value={loginForm.username}
+                    onChange={(event) => setLoginForm((prev) => ({ ...prev, username: event.target.value }))}
+                    placeholder="예: 이름 또는 admin"
+                  />
+                </label>
+                <label className="field">
+                  <span className="field-title">비밀번호</span>
+                  <input
+                    className="input"
+                    type="password"
+                    value={loginForm.password}
+                    onChange={(event) => setLoginForm((prev) => ({ ...prev, password: event.target.value }))}
+                    placeholder="비밀번호"
+                  />
+                </label>
               </div>
-              <div className="field">
-                <span className="field-title">비밀번호</span>
-                <input
-                  className="input"
-	                  type="password"
-	                  value={loginForm.password}
-	                  onChange={(event) => setLoginForm((prev) => ({ ...prev, password: event.target.value }))}
-	                  placeholder="비밀번호"
-	                />
+              <div className="button-row">
+                <button className="button primary" type="submit">
+                  로그인
+                </button>
               </div>
-            </div>
-            <div className="button-row">
-              <button className="button primary" onClick={handleLogin}>
-                로그인
-              </button>
-            </div>
+            </form>
             <div className="auth-note">
               관리자 ID: <strong>{health?.default_admin_username || "admin"}</strong>
               <br />
@@ -3581,17 +3760,6 @@ function App() {
                 <h1>수업 교체·보강</h1>
                 <p className="panel-copy">수업의 교체와 보강 관리를 손쉽게</p>
               </div>
-              <div className="hero-shortcuts" aria-label="빠른 이동">
-                {tabs.map((tab) => (
-                  <button
-                    key={`hero-${tab.id}`}
-                    className={`hero-shortcut ${activeTab === tab.id ? "active" : ""}`}
-                    onClick={() => changeTab(tab.id)}
-                  >
-                    {tab.label}
-                  </button>
-                ))}
-              </div>
               <div className="hero-metrics">
                 <div className="metric-card">
                   <div>기준 주</div>
@@ -3722,10 +3890,14 @@ function App() {
                           </div>
                           <button
                             className="button primary"
-                            disabled={periodCell.status === "locked"}
+                            disabled={periodCell.status === "locked" || candidateLoading}
                             onClick={() => loadCandidates(periodCell.period, candidateWeekOffset)}
                           >
-                            {periodCell.status === "locked" ? "요청 중" : "후보 찾기"}
+                            {periodCell.status === "locked"
+                              ? "요청 중"
+                              : candidateLoading && sourceChoice === periodCell.period
+                                ? "조회 중…"
+                                : "후보 찾기"}
                           </button>
                         </div>
                       </div>
@@ -3769,7 +3941,15 @@ function App() {
                     </span>
                   ) : null}
                 </div>
-                {!hasCandidateSearch ? (
+                {candidateLoading ? (
+                  <div className="candidate-skeleton" aria-hidden="true">
+                    <div className="skeleton-line"></div>
+                    <div className="skeleton-line"></div>
+                    <div className="skeleton-line short"></div>
+                  </div>
+                ) : candidateError ? (
+                  <div className="empty error">{candidateError}</div>
+                ) : !hasCandidateSearch ? (
                   <div className="empty">왼쪽에서 내 수업을 선택하면 이번 주와 다음 주 후보를 한 번에 조회합니다.</div>
                 ) : !candidateResult ? (
                   <div className="empty">선택한 주의 후보 정보를 불러오지 못했습니다. 다시 후보 찾기를 눌러 주세요.</div>
@@ -3876,10 +4056,16 @@ function App() {
                           </div>
                           <button
                             className="button primary"
-                            disabled={!source.can_request}
+                            disabled={!source.can_request || coverageCandidateLoading}
                             onClick={() => loadCoverageTeachers(source)}
                           >
-                            보강 후보 찾기
+                            {coverageCandidateLoading &&
+                            coverageSourceChoice?.date === source.date &&
+                            coverageSourceChoice?.period === source.period &&
+                            coverageSourceChoice?.class_code === source.class_code &&
+                            coverageSourceChoice?.subject === source.subject
+                              ? "조회 중…"
+                              : "보강 후보 찾기"}
                           </button>
                         </div>
                       </div>
@@ -3950,7 +4136,15 @@ function App() {
                     </div>
                   </div>
                 ) : null}
-                {!hasCoverageCandidateSearch ? (
+                {coverageCandidateLoading ? (
+                  <div className="candidate-skeleton" aria-hidden="true">
+                    <div className="skeleton-line"></div>
+                    <div className="skeleton-line"></div>
+                    <div className="skeleton-line short"></div>
+                  </div>
+                ) : coverageCandidateError ? (
+                  <div className="empty error">{coverageCandidateError}</div>
+                ) : !hasCoverageCandidateSearch ? (
                   <div className="empty">내 수업 카드를 선택하면 이번 주와 다음 주 보강 후보를 한 번에 조회합니다.</div>
                 ) : !coverageResult ? (
                   <div className="empty">선택한 주의 후보 정보를 불러오지 못했습니다. 다시 보강 후보 찾기를 눌러 주세요.</div>

@@ -26,6 +26,7 @@ from app.schemas import (
     NotificationDeletePayload,
     NotificationReadPayload,
     PasswordChangePayload,
+    SemesterResetPayload,
     SwapDecisionPayload,
     SwapRequestCreatePayload,
     TeacherCreatePayload,
@@ -65,6 +66,7 @@ from app.schedule_service import (
     get_weekly_schedule,
     get_weekly_coverage_candidates,
     get_weekly_plan,
+    get_semester_reset_status,
     get_user_by_id,
     import_preview_into_database,
     list_admin_timetable_slots,
@@ -75,8 +77,10 @@ from app.schedule_service import (
     list_teachers,
     login_user,
     mark_notifications_read,
+    perform_semester_reset,
     preview_event_coverage_plan,
     reset_teacher_password,
+    restore_semester_reset_backup,
     seed_default_admin,
     serialize_user,
     update_calendar_settings,
@@ -556,6 +560,21 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def admin_delete_teacher(teacher_id: int, user: dict = Depends(admin_user)) -> dict:
         with db_session(resolved_settings) as connection:
             delete_teacher(connection, user["id"], teacher_id)
+        return {"ok": True}
+
+    @app.get("/api/admin/semester-reset")
+    def admin_semester_reset_status(user: dict = Depends(admin_user)) -> dict:
+        return get_semester_reset_status(resolved_settings)
+
+    @app.post("/api/admin/semester-reset")
+    def admin_semester_reset(payload: SemesterResetPayload, user: dict = Depends(admin_user)) -> dict:
+        with db_session(resolved_settings) as connection:
+            result = perform_semester_reset(connection, resolved_settings, payload.confirm_text)
+        return result
+
+    @app.post("/api/admin/semester-reset/undo")
+    def admin_semester_reset_undo(user: dict = Depends(admin_user)) -> dict:
+        restore_semester_reset_backup(resolved_settings)
         return {"ok": True}
 
     @app.post("/api/admin/timetable/preview")

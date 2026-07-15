@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections import defaultdict
 from datetime import date, datetime, time, timedelta
 import json
+from pathlib import Path
 import sqlite3
 from typing import Any
 
@@ -4011,3 +4012,61 @@ def delete_admin_coverage_request(connection: sqlite3.Connection, coverage_reque
     if row["status"] == "accepted":
         raise HTTPException(status_code=400, detail="확정된 보강은 먼저 취소한 뒤 삭제할 수 있습니다.")
     connection.execute("DELETE FROM coverage_requests WHERE id = ?", (coverage_request_id,))
+
+
+SEMESTER_RESET_CONFIRM_TEXT = "초기화"
+
+
+def _semester_reset_backup_path(settings: Settings) -> Path:
+    return settings.database_path.parent / "backups" / "semester_reset_backup.db"
+
+
+def get_semester_reset_status(settings: Settings) -> dict:
+    backup_path = _semester_reset_backup_path(settings)
+    if not backup_path.exists():
+        return {"backup_available": False, "backup_created_at": None}
+    created_at = datetime.fromtimestamp(backup_path.stat().st_mtime).isoformat()
+    return {"backup_available": True, "backup_created_at": created_at}
+
+
+def perform_semester_reset(connection: sqlite3.Connection, settings: Settings, confirm_text: str) -> dict:
+    if confirm_text.strip() != SEMESTER_RESET_CONFIRM_TEXT:
+        raise HTTPException(status_code=400, detail=f"확인 문구가 일치하지 않습니다. '{SEMESTER_RESET_CONFIRM_TEXT}'를 정확히 입력해 주세요.")
+
+    backup_path = _semester_reset_backup_path(settings)
+    backup_path.parent.mkdir(parents=True, exist_ok=True)
+    if backup_path.exists():
+        backup_path.unlink()
+    source = sqlite3.connect(settings.database_path)
+    try:
+        dest = sqlite3.connect(backup_path)
+        try:
+            source.backup(dest)
+        finally:
+            dest.close()
+    finally:
+        source.close()
+
+    removed_teachers = connection.execute(
+        "SELECT COUNT(*) AS count FROM teachers WHERE role = 'teacher'"
+    ).fetchone()["count"]
+    connection.execute("DELETE FROM teachers WHERE role = 'teacher'")
+    connection.execute("DELETE FROM calendar_days")
+    connection.execute("DELETE FROM app_settings")
+    return {"removed_teachers": removed_teachers}
+
+
+def restore_semester_reset_backup(settings: Settings) -> None:
+    backup_path = _semester_reset_backup_path(settings)
+    if not backup_path.exists():
+        raise HTTPException(status_code=404, detail="되돌릴 백업이 없습니다.")
+    source = sqlite3.connect(backup_path)
+    try:
+        dest = sqlite3.connect(settings.database_path)
+        try:
+            source.backup(dest)
+        finally:
+            dest.close()
+    finally:
+        source.close()
+    backup_path.unlink()

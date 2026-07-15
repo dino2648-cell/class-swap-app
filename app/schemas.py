@@ -136,3 +136,7 @@ class TimetableConfirmPayload(BaseModel):
     preview_id: str = Field(..., min_length=1, max_length=80)
     corrections: list[TimetableCorrectionPayload] = Field(default_factory=list)
     missing_teacher_actions: list[MissingTeacherActionPayload] = Field(default_factory=list)
+
+
+class SemesterResetPayload(BaseModel):
+    confirm_text: str = Field(..., min_length=1, max_length=40)
